@@ -1,7 +1,7 @@
 import argparse
 import logging
 import json
-import os
+from logging.handlers import RotatingFileHandler
 import threading
 import requests
 import time
@@ -18,8 +18,10 @@ def setup_logger():
     logger = logging.getLogger("uniqlo_monitor")
     logger.setLevel(logging.INFO)
 
-    # Create a file handler
-    file_handler = logging.FileHandler("uniqlo_monitor.log")
+    # Create a rotating file handler
+    file_handler = RotatingFileHandler(
+        "uniqlo_monitor.log", maxBytes=1024 * 1024, backupCount=3
+    )
     file_handler.setLevel(logging.INFO)
 
     # Create a console handler
@@ -153,8 +155,7 @@ def send_ntfy_notification(
         logger.error(f"Failed to send notification: {r.text}")
 
 
-def main():
-    product_history = {}
+def initialize_product_history():
     for url, product_name in product_urls.items():
         info = get_info(url)
 
@@ -206,20 +207,27 @@ def main():
                 show_image=True,
             )
 
+
+def process_new_products():
+    # add in any new products to the product_history
+    with new_products_lock:
+        for url, product_name in new_products_working_queue.items():
+            info = get_info(url)
+            if not info:
+                continue
+            info["product_name"] = product_name
+            info["url"] = url
+            product_history[url] = info
+
+        # clear the working queue after adding to product_history
+        new_products_working_queue.clear()
+
+
+def main():
+    initialize_product_history()
+
     while True:
-        # add in any new products to the product_history
-        with new_products_lock:
-            for url, product_name in new_products_working_queue.items():
-                info = get_info(url)
-                if not info:
-                    continue
-                info["product_name"] = product_name
-                info["url"] = url
-                product_history[url] = info
-
-            # clear the working queue after adding to product_history
-            new_products_working_queue.clear()
-
+        process_new_products()
         # check for updates
         for url, old_info in product_history.items():
             new_info = get_info(url)
@@ -331,29 +339,49 @@ def main():
         time.sleep(refresh_time)
 
 
+def parse_uniqlo_url(url):
+    return "https://www.uniqlo.com" + url.split("www.uniqlo.com")[1]
+
+
 def listen_to_ntfy(server, topic):
-    global new_products, new_products_working_queue
     while True:
         try:
             response = requests.get(f"{server}/{topic}/raw", stream=True)
             for line in response.iter_lines():
-                if line:
-                    line_str = line.decode("utf-8")
-                    if "www.uniqlo.com" in line_str and "name:" in line_str:
+                if line and "www.uniqlo.com" in (line_str := line.decode("utf-8")):
+                    if "name:" in line_str:
                         # Split the line into URL and product name
 
                         url, product_name = line_str.split("name:", 1)
-                        url = url.strip()
-                        # add https:// if it's not there
-                        url = "https://www.uniqlo.com" + url.split("www.uniqlo.com")[1]
+                        url = parse_uniqlo_url(url.strip())
                         product_name = product_name.strip()
 
                         with new_products_lock:
                             new_products_working_queue[url] = product_name
+                            product_urls[url] = product_name
 
-                        new_products[url] = product_name
-                        json.dump(
-                            new_products, open("new_products.json", "w"), indent=4
+                        json.dump(product_urls, open("products.json", "w"), indent=4)
+                        logger.info(f"Added product: {url} - {product_name}")
+                    elif "remove:" in line_str:
+                        url = line_str.replace("remove:", "").strip()
+                        url = parse_uniqlo_url(url)
+                        with new_products_lock:
+                            is_removed = False
+                            if url in new_products_working_queue:
+                                del new_products_working_queue[url]
+                                is_removed = True
+                            if url in product_urls:
+                                del product_urls[url]
+                                is_removed = True
+                                json.dump(
+                                    product_urls,
+                                    open("products.json", "w"),
+                                    indent=4,
+                                )
+                        if url in product_history:
+                            del product_history[url]
+                        logger.info(
+                            f"{'Removed' if is_removed else 'Not found'} product: {url}"
                         )
 
         except requests.exceptions.RequestException as e:
@@ -382,13 +410,11 @@ if __name__ == "__main__":
     with open("config.yml", "r") as f:
         config = yaml.safe_load(f)
 
-    product_urls = config["product_urls"]
-    if os.path.exists("new_products.json"):
-        product_urls.update(json.load(open("new_products.json", "r")))
+    product_urls = json.load(open("products.json", "r"))
     refresh_time = config["refresh_time"]
     topic = config["ntfy_topic"]
 
-    new_products = dict()
+    product_history = dict()
     new_products_working_queue = dict()
     new_products_lock = threading.Lock()
 

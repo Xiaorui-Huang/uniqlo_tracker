@@ -1,4 +1,4 @@
 Pipfile.lock
 config.yml
-uniqlo_monitor.log
-new_products.json
+*.log*
+products.json
