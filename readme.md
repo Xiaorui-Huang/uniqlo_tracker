@@ -1,4 +1,5 @@
-# UNIQLO Price and Stock Tracker
+# UNIQLO Realtime Price and Inventory Tracker
+***via phone notifications, so you'll always get the best price and before it's sold out***
 
 This Python script monitors the prices, stock status, and quantities of UNIQLO products. It sends notifications to an ntfy.sh topic whenever there's a change in price, stock status, or quantity (if low on stock).
 
@@ -49,11 +50,18 @@ ntfy_listen_topic: <your_ntfy_listen_topic>
 python main.py
 ```
 
+**Note:** Due to the highly customized preferences for clothing items that
+each person would want to subscribe to, you will need to run this script on a
+personal machine or cloud hosting server and select a private topic of your own
+choice. All sensitive data will be maintained on that machine locally.
+
 The script will start monitoring the products listed in `products.json` and send notifications to the specified `ntfy_topic` whenever there's a change in price, stock status, or quantity (if low on stock).
 
 ## Adding or Removing Products
 
 You can interactively add or remove products to monitor by sending POST requests to the `ntfy_listen_topic` specified in your `config.yml` file.
+
+### Using curl
 
 To add a product:
 
@@ -70,6 +78,35 @@ curl -X POST '{{server}}/{{listen_topic}}' -H 'Content-Type:text/plain' -H 'Prio
 ```
 
 Replace `{{server}}` with your ntfy.sh server URL, `{{listen_topic}}` with your `ntfy_listen_topic`, and `{{url}}` with the UNIQLO product URL you want to remove.
+
+### Using API Tester (Android)
+
+You can use the [API Tester](https://play.google.com/store/apps/details?id=apitester.org) app on
+Android to send requests to the `ntfy_listen_topic`. This app works well with
+the curl commands mentioned above. Be sure to set the content type to
+`text/plain` and the priority to `min` when sending the requests. Use the
+variables feature for easy substitution of values i.e., `{{server}}`,
+`{{listen_topic}}`, `{{url}}`, and `{{name}}`.
+
+### Using Web UI
+
+Alternatively, you can use the web UI provided by ntfy.sh to publish messages to
+the `ntfy_listen_topic`. Visit `ntfy.sh/{{listen_topic}}` or
+`{{your_server}}/{{listen_topic}}` and send the following messages:
+
+To remove a product:
+
+```
+remove: <uniqlo_url>
+```
+
+To add a product:
+
+```
+<uniqlo_url> name:<name_of_item_to_add>
+```
+
+Replace `<uniqlo_url>` with the UNIQLO product URL and `<name_of_item_to_add>` with the name of the product you want to add.
 
 ## Notification Format
 
