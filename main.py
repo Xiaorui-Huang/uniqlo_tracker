@@ -3,6 +3,7 @@ import time
 import yaml
 import re
 from urllib.parse import quote, urlparse, parse_qs
+from tabulate import tabulate
 
 # https://docs.ntfy.sh/publish
 
@@ -102,10 +103,11 @@ def send_ntfy_notification(title, message, topic, product_info=None, priority=3,
     if show_image and product_info["image_url"]:
         headers["Attach"] = product_info["image_url"]
 
-    r = requests.post(f"https://ntfy.sh/{topic}", data=message, headers=headers)
+    requests.post(f"http://localhost:6969/{topic}", data=message, headers=headers)
+    # r = requests.post(f"https://ntfy.sh/{topic}", data=message, headers=headers)
     # if r.status_code != 200:
     #     print(r.text)
-    
+
 
 if __name__ == "__main__":
     with open("config.yml", "r") as f:
@@ -148,7 +150,7 @@ if __name__ == "__main__":
             title = f"{product['product_name']} is LOW on stock"
             priority = 4
             tags = "warning"
-            if product["quantity"] <= 3 :
+            if product["quantity"] <= 3:
                 title = f"{product['product_name']} is ALMOST OUT of stock"
                 priority = 5
                 tags = "rotating_light"
@@ -156,7 +158,7 @@ if __name__ == "__main__":
         if product["statusCode"] == "STOCK_OUT":
             title = f"{product['product_name']} is OUT OF STOCK"
             priority = 4
-            tags = "STOCK"
+            tags = "skull"
 
         send_ntfy_notification(title, msg, topic, product, priority=priority, tags=tags, show_image=True)
 
@@ -174,61 +176,64 @@ if __name__ == "__main__":
             new_info["product_name"] = old_info["product_name"]
             new_info["url"] = url
 
-            if new_info:
-                # check price
-                if new_info["price"] != old_info["price"]:
-                    price_diff = new_info["price"] - old_info["price"]
-                    msg = f"""The price for {new_info['product_name']} has changed
+            # check price
+            if new_info["price"] != old_info["price"]:
+                price_diff = new_info["price"] - old_info["price"]
+                msg = f"""The price for {new_info['product_name']} has changed
     Old price: {old_info['price']}
     New price: {new_info['price']}
     Price difference: {price_diff}"""
-                    promo_str = " (ON PROMO)" if new_info["is_promo"] else ""
+                promo_str = " (ON PROMO)" if new_info["is_promo"] else ""
+                send_ntfy_notification(
+                    f"Price change for {new_info['product_name']}{promo_str}",
+                    msg,
+                    topic,
+                    new_info,
+                    priority=4,
+                    tags="tada",
+                )
+
+            # check stock status
+            if new_info["statusCode"] != old_info["statusCode"]:
+                if new_info["statusCode"] == "LOW_STOCK":
                     send_ntfy_notification(
-                        f"Price change for {new_info['product_name']}{promo_str}",
-                        msg,
+                        f"{new_info['product_name']} is LOW on stock",
+                        f"Price: {new_info['price']}, Quantity: {new_info['quantity']}, {new_info['color_name']}, {new_info['size_name']}",
                         topic,
                         new_info,
                         priority=4,
-                        tags="tada",
+                        tags="warning",
+                        show_image=True,
+                    )
+                elif new_info["statusCode"] == "STOCK_OUT":
+                    send_ntfy_notification(
+                        f"{new_info['product_name']} is OUT OF STOCK",
+                        "",
+                        topic,
+                        new_info,
+                        priority=4,
+                        tags="skull",
                     )
 
-                # check stock status
-                if new_info["statusCode"] != old_info["statusCode"]:
-                    if new_info["statusCode"] == "LOW_STOCK":
-                        send_ntfy_notification(
-                            f"{new_info['product_name']} is LOW on stock",
-                            f"Price: {new_info['price']}, Quantity: {new_info['quantity']}, {new_info['color_name']}, {new_info['size_name']}",
-                            topic,
-                            new_info,
-                            priority=4,
-                            tags="warning",
-                            show_image=True,
-                        )
-                    elif new_info["statusCode"] == "STOCK_OUT":
-                        send_ntfy_notification(
-                            f"{new_info['product_name']} is OUT OF STOCK",
-                            "",
-                            topic,
-                            new_info,
-                            priority=4,
-                            tags="skull",
-                        )
+            # check quantity if low stock
+            if new_info["statusCode"] == "LOW_STOCK" and old_info["quantity"] != new_info["quantity"]:
+                title = f"{new_info['product_name']} - Quantity change"
+                msg = f"Qunaity is changed from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}"
+                priority = 3
+                if new_info["quantity"] <= 3:
+                    title = f"{new_info['product_name']} - ALMOST OUT OF STOCK"
+                    priority = 5
+                    tags = "rotating_light"
+                send_ntfy_notification(title, msg, topic, new_info, priority=priority, tags=tags)
 
-                # check quantity if low stock
-                if new_info["statusCode"] == "LOW_STOCK" and old_info["quantity"] != new_info["quantity"]:
-                    title = f"{new_info['product_name']} - Quantity change"
-                    msg = f"Qunaity is down from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}"
-                    priority = 3
-                    if new_info["quantity"] <= 3:
-                        title = f"{new_info['product_name']} - ALMOST OUT OF STOCK"
-                        priority = 5
-                        tags = "rotating_light"
-                    send_ntfy_notification(title, msg, topic, new_info, priority=priority, tags=tags)
+            product_history[url] = new_info
 
-                product_history[url] = new_info
-                formated_time = time.strftime("%m-%d %H:%M", time.localtime())
-                print(f"{formated_time} | {old_info['product_name']} - Quantity: {new_info['quantity']}")
-            else:
-                print(f"Unable to retrieve updated info for {url}")
+        formated_time = time.strftime("%m-%d %H:%M", time.localtime())
+        # print(f"{formated_time} | {old_info['product_name']} - Quantity: {new_info['quantity']}")
+        product_data = [
+            (formated_time, info["product_name"], info["quantity"], info["url"]) for info in product_history.values()
+        ]
+        product_data.sort(key=lambda x: x[2])
+        print(tabulate(product_data, headers=["", "Product Name", "Quantity", "URL"], tablefmt="presto"))
 
         time.sleep(refresh_time)

@@ -20,11 +20,12 @@ stock).
 - The following Python packages:
   - requests
   - PyYAML
+  - tabulate
 
 You can install the required packages using pip:
 
 ```bash
-pip install requests PyYAML
+pip install requests PyYAML tabulate
 ```
 
 ## Setup
