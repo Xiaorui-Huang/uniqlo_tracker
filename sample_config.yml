@@ -1,0 +1,5 @@
+product_urls:
+  https://www.uniqlo.com/prod1: product 1 name
+  https://www.uniqlo.com/prod2: product 2 name
+refresh_time: 1800 # 30 minutes
+ntfy_topic: notify-me
