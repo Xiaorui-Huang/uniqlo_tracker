@@ -1,3 +1,8 @@
+import argparse
+import logging
+import json
+import os
+import threading
 import requests
 import time
 import yaml
@@ -5,7 +10,31 @@ import re
 from urllib.parse import quote, urlparse, parse_qs
 from tabulate import tabulate
 
+
 # https://docs.ntfy.sh/publish
+
+
+def setup_logger():
+    logger = logging.getLogger("uniqlo_monitor")
+    logger.setLevel(logging.INFO)
+
+    # Create a file handler
+    file_handler = logging.FileHandler("uniqlo_monitor.log")
+    file_handler.setLevel(logging.INFO)
+
+    # Create a console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Create a formatter and add it to the handlers
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # Add the handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    return logger
 
 
 def parse_product_url(url):
@@ -39,7 +68,9 @@ def get_api_url(url):
 
 
 # https://www.uniqlo.com/ca/api/commerce/v3/en/products/E463985-000
-def get_info_from_api(api_url, color_code, size_code) -> tuple[float, str, int, bool, str, str]:
+def get_info_from_api(
+    api_url, color_code, size_code
+) -> tuple[float, str, int, bool, str, str]:
     """
     returns a tuple with the following values:
         price: float
@@ -52,7 +83,9 @@ def get_info_from_api(api_url, color_code, size_code) -> tuple[float, str, int, 
     """
     response = requests.get(api_url, headers={"User-Agent": "Mozilla/5.0"})
     if response.status_code != 200:
-        print(f"Failed to get product data for {api_url} from API. Status code: {response.status_code}")
+        logger.error(
+            f"Failed to get product data for {api_url} from API. Status code: {response.status_code}"
+        )
         return None
 
     product_dict = response.json()["result"]["items"][0]
@@ -65,7 +98,11 @@ def get_info_from_api(api_url, color_code, size_code) -> tuple[float, str, int, 
         ):
             prices = variant["prices"]
             # prices are either base or promo
-            price = float(prices["promo"]["value"]) if prices["promo"] else float(prices["base"]["value"])
+            price = (
+                float(prices["promo"]["value"])
+                if prices["promo"]
+                else float(prices["base"]["value"])
+            )
 
             # variant["stock"]["transitStatus"] might be insteresting
             # actual name is at response.json()["result"]["items"][0]["name"]
@@ -75,11 +112,17 @@ def get_info_from_api(api_url, color_code, size_code) -> tuple[float, str, int, 
                 "statusLocalized": variant["stock"]["statusLocalized"],
                 "quantity": variant["stock"]["quantity"],
                 "is_promo": bool(prices["promo"]),
-                "color_name": variant["color"]["name"] if color_code is not None else "",
+                "color_name": variant["color"]["name"]
+                if color_code is not None
+                else "",
                 "size_name": variant["size"]["name"] if size_code is not None else "",
-                "image_url": next(filter(lambda image_dict: image_dict["colorCode"] == display_color, images), {"url": ""})[
-                    "url"
-                ],
+                "image_url": next(
+                    filter(
+                        lambda image_dict: image_dict["colorCode"] == display_color,
+                        images,
+                    ),
+                    {"url": ""},
+                )["url"],
             }
 
 
@@ -89,7 +132,9 @@ def get_info(url):
     return get_info_from_api(api_url, color_code, size_code)
 
 
-def send_ntfy_notification(title, message, topic, product_info=None, priority=3, tags=None, show_image=False):
+def send_ntfy_notification(
+    title, message, topic, product_info=None, priority=3, tags=None, show_image=False
+):
     headers = {}
 
     headers["Title"] = title
@@ -103,20 +148,12 @@ def send_ntfy_notification(title, message, topic, product_info=None, priority=3,
     if show_image and product_info["image_url"]:
         headers["Attach"] = product_info["image_url"]
 
-    requests.post(f"http://localhost:6969/{topic}", data=message, headers=headers)
-    # r = requests.post(f"https://ntfy.sh/{topic}", data=message, headers=headers)
-    # if r.status_code != 200:
-    #     print(r.text)
+    r = requests.post(f"{args.server}/{topic}", data=message, headers=headers)
+    if r.status_code != 200:
+        logger.error(f"Failed to send notification: {r.text}")
 
 
-if __name__ == "__main__":
-    with open("config.yml", "r") as f:
-        config = yaml.safe_load(f)
-
-    product_urls = config["product_urls"]
-    refresh_time = config["refresh_time"]
-    topic = config["ntfy_topic"]
-
+def main():
     product_history = {}
     for url, product_name in product_urls.items():
         info = get_info(url)
@@ -125,7 +162,7 @@ if __name__ == "__main__":
             # try again once
             info = get_info(url)
             if not info:
-                print(f"Unable to retrieve price for {url}")
+                logger.error(f"Unable to retrieve price for {url}")
             continue
 
         info["product_name"] = product_name
@@ -134,35 +171,56 @@ if __name__ == "__main__":
         if info:
             product_history[url] = info
         else:
-            print(f"Unable to retrieve price for {url}")
+            logger.error(f"Unable to retrieve price for {url}")
 
-    for product in product_history.values():
-        is_low_or_out_of_stock = product["statusCode"] in ["LOW_STOCK", "STOCK_OUT"]
+    if not args.carry_on:
+        for product in product_history.values():
+            title = f"{product['product_name']} Added"
+            priority = 3
+            tags = None
+            msg = f"Price: {product['price']}, Quantity: {product['quantity']}, {product['color_name']}, {product['size_name']}"
+            if product["is_promo"]:
+                msg += " (on promo)"
 
-        title = f"{product['product_name']} Added"
-        priority = 3
-        tags = None
-        msg = f"Price: {product['price']}, Quantity: {product['quantity']}, {product['color_name']}, {product['size_name']}"
-        if product["is_promo"]:
-            msg += " (on promo)"
+            if product["statusCode"] == "LOW_STOCK":
+                title = f"{product['product_name']} is LOW on stock"
+                priority = 4
+                tags = "warning"
+                if product["quantity"] <= 3:
+                    title = f"{product['product_name']} is ALMOST OUT of stock"
+                    priority = 5
+                    tags = "rotating_light"
 
-        if product["statusCode"] == "LOW_STOCK":
-            title = f"{product['product_name']} is LOW on stock"
-            priority = 4
-            tags = "warning"
-            if product["quantity"] <= 3:
-                title = f"{product['product_name']} is ALMOST OUT of stock"
-                priority = 5
-                tags = "rotating_light"
+            if product["statusCode"] == "STOCK_OUT":
+                title = f"{product['product_name']} is OUT OF STOCK"
+                priority = 4
+                tags = "skull"
 
-        if product["statusCode"] == "STOCK_OUT":
-            title = f"{product['product_name']} is OUT OF STOCK"
-            priority = 4
-            tags = "skull"
-
-        send_ntfy_notification(title, msg, topic, product, priority=priority, tags=tags, show_image=True)
+            send_ntfy_notification(
+                title,
+                msg,
+                topic,
+                product,
+                priority=priority,
+                tags=tags,
+                show_image=True,
+            )
 
     while True:
+        # add in any new products to the product_history
+        with new_products_lock:
+            for url, product_name in new_products_working_queue.items():
+                info = get_info(url)
+                if not info:
+                    continue
+                info["product_name"] = product_name
+                info["url"] = url
+                product_history[url] = info
+
+            # clear the working queue after adding to product_history
+            new_products_working_queue.clear()
+
+        # check for updates
         for url, old_info in product_history.items():
             new_info = get_info(url)
 
@@ -170,7 +228,7 @@ if __name__ == "__main__":
                 # try again once
                 new_info = get_info(url)
                 if not new_info:
-                    print(f"Unable to retrieve updated info for {url}")
+                    logger.error(f"Unable to retrieve updated info for {url}")
                     continue
 
             new_info["product_name"] = old_info["product_name"]
@@ -202,13 +260,15 @@ if __name__ == "__main__":
                         topic,
                         new_info,
                         priority=4,
-                        tags="warning",
+                        tags="warning"
+                        if old_info["statusCode"] == "IN_STOCK"
+                        else "up,tada",
                         show_image=True,
                     )
                 elif new_info["statusCode"] == "STOCK_OUT":
                     send_ntfy_notification(
                         f"{new_info['product_name']} is OUT OF STOCK",
-                        "",
+                        " ",
                         topic,
                         new_info,
                         priority=4,
@@ -216,24 +276,126 @@ if __name__ == "__main__":
                     )
 
             # check quantity if low stock
-            if new_info["statusCode"] == "LOW_STOCK" and old_info["quantity"] != new_info["quantity"]:
-                title = f"{new_info['product_name']} - Quantity change"
-                msg = f"Qunaity is changed from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}"
-                priority = 3
-                if new_info["quantity"] <= 3:
-                    title = f"{new_info['product_name']} - ALMOST OUT OF STOCK"
-                    priority = 5
-                    tags = "rotating_light"
-                send_ntfy_notification(title, msg, topic, new_info, priority=priority, tags=tags)
+            if new_info["statusCode"] == "LOW_STOCK":
+                if old_info["quantity"] > new_info["quantity"]:
+                    title = f"{new_info['product_name']} - Quantity change"
+                    msg = f"Qunaity is down from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}"
+                    priority = 3
+                    tags = "small_red_triangle_down	"
+                    if new_info["quantity"] <= 3:
+                        title = f"{new_info['product_name']} - ALMOST OUT OF STOCK"
+                        priority = 5
+                        tags = "rotating_light"
+                    send_ntfy_notification(
+                        title, msg, topic, new_info, priority=priority, tags=tags
+                    )
+                elif old_info["quantity"] < new_info["quantity"]:
+                    send_ntfy_notification(
+                        f"{new_info['product_name']} - Quantity change",
+                        f"Qunaity is up from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}",
+                        topic,
+                        new_info,
+                        tags="up",
+                    )
 
+            new_info["quantity_change"] = (
+                f"{old_info['quantity']} -> {new_info['quantity']}"
+                if old_info["quantity"] != new_info["quantity"]
+                else None
+            )
             product_history[url] = new_info
 
-        formated_time = time.strftime("%m-%d %H:%M", time.localtime())
-        # print(f"{formated_time} | {old_info['product_name']} - Quantity: {new_info['quantity']}")
         product_data = [
-            (formated_time, info["product_name"], info["quantity"], info["url"]) for info in product_history.values()
+            [
+                info["product_name"],
+                (info["quantity"], info["quantity_change"]),
+                info["color_name"],
+                info["size_name"],
+                info["url"],
+            ]
+            for info in product_history.values()
         ]
-        product_data.sort(key=lambda x: x[2])
-        print(tabulate(product_data, headers=["", "Product Name", "Quantity", "URL"], tablefmt="presto"))
+        product_data.sort(key=lambda x: x[1][0])
+        for i, (_, (quantity, change), *_) in enumerate(product_data):
+            product_data[i][1] = change if change is not None else str(quantity)
+
+        logger.info(
+            "\n"
+            + tabulate(
+                product_data,
+                headers=["Product Name", "Quantity", "Color", "Size", "URL"],
+                tablefmt="outline",
+            )
+        )
 
         time.sleep(refresh_time)
+
+
+def listen_to_ntfy(server, topic):
+    global new_products, new_products_working_queue
+    while True:
+        try:
+            response = requests.get(f"{server}/{topic}/raw", stream=True)
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode("utf-8")
+                    if "www.uniqlo.com" in line_str and "name:" in line_str:
+                        # Split the line into URL and product name
+
+                        url, product_name = line_str.split("name:", 1)
+                        url = url.strip()
+                        # add https:// if it's not there
+                        url = "https://www.uniqlo.com" + url.split("www.uniqlo.com")[1]
+                        product_name = product_name.strip()
+
+                        with new_products_lock:
+                            new_products_working_queue[url] = product_name
+
+                        new_products[url] = product_name
+                        json.dump(
+                            new_products, open("new_products.json", "w"), indent=4
+                        )
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Server error: {e}")
+            logger.info("Retrying in 5 seconds")
+            time.sleep(5)
+            continue
+        break
+
+
+if __name__ == "__main__":
+    logger = setup_logger()
+    parser = argparse.ArgumentParser(description="Monitor Uniqlo products")
+    parser.add_argument(
+        "-c",
+        "--carry_on",
+        action="store_true",
+        default=False,
+        help="Continue monitoring",
+    )
+    parser.add_argument(
+        "-s", "--server", type=str, default="https://ntfy.sh", help="Ntfy server URL"
+    )
+    args = parser.parse_args()
+
+    with open("config.yml", "r") as f:
+        config = yaml.safe_load(f)
+
+    product_urls = config["product_urls"]
+    if os.path.exists("new_products.json"):
+        product_urls.update(json.load(open("new_products.json", "r")))
+    refresh_time = config["refresh_time"]
+    topic = config["ntfy_topic"]
+
+    new_products = dict()
+    new_products_working_queue = dict()
+    new_products_lock = threading.Lock()
+
+    listen_thread = threading.Thread(target=listen_to_ntfy, args=(args.server, topic))
+    listen_thread.daemon = True
+    listen_thread.start()
+
+    main()
+
+    listen_thread.join()
