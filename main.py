@@ -400,27 +400,7 @@ def listen_to_ntfy(server, topic):
             response = requests.get(f"{server}/{topic}/raw", stream=True)
             for line in response.iter_lines():
                 if line and "www.uniqlo.com" in (line_str := line.decode("utf-8")):
-                    if "name:" in line_str:
-                        # Split the line into URL and product name
-
-                        url, product_name = line_str.split("name:", 1)
-                        url = parse_uniqlo_url(url.strip())
-                        product_name = product_name.strip()
-
-                        info, url = get_info(url)
-                        if url in product_urls or url in product_history:
-                            logger.info(f"Product already exists: {url}")
-                            continue
-
-                        process_new_products(info, url, product_name)
-
-                        with product_urls_lock:
-                            product_urls[url] = product_name
-                            json.dump(
-                                product_urls, open("products.json", "w"), indent=4
-                            )
-                        logger.info(f"Added product: {url} - {product_name}")
-                    elif "remove:" in line_str:
+                    if "remove:" in line_str:
                         is_removed = False
                         url = line_str.replace("remove:", "").strip()
                         url = parse_uniqlo_url(url)
@@ -444,6 +424,26 @@ def listen_to_ntfy(server, topic):
                             if is_removed
                             else f"Product not found: {url}"
                         )
+                    elif "name:" in line_str:
+                        # Split the line into URL and product name
+
+                        url, product_name = line_str.split("name:", 1)
+                        url = parse_uniqlo_url(url.strip())
+                        product_name = product_name.strip()
+
+                        info, url = get_info(url)
+                        if url in product_urls or url in product_history:
+                            logger.info(f"Product already exists: {url}")
+                            continue
+
+                        process_new_products(info, url, product_name)
+
+                        with product_urls_lock:
+                            product_urls[url] = product_name
+                            json.dump(
+                                product_urls, open("products.json", "w"), indent=4
+                            )
+                        logger.info(f"Added product: {url} - {product_name}")
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Server error: {e}")
