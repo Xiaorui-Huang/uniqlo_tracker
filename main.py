@@ -368,6 +368,7 @@ def main():
                 [
                     info["product_name"],
                     (info["quantity"], info["quantity_change"]),
+                    info["price"],
                     info["color_name"],
                     info["size_name"],
                     info["url"],
@@ -382,7 +383,7 @@ def main():
             "\n"
             + tabulate(
                 product_data,
-                headers=["Product Name", "Quantity", "Color", "Size", "URL"],
+                headers=["Product Name", "Quantity", "Price", "Color", "Size", "URL"],
                 tablefmt="outline",
             )
         )
@@ -425,8 +426,6 @@ def listen_to_ntfy(server, topic):
                             else f"Product not found: {url}"
                         )
                     elif "name:" in line_str:
-                        # Split the line into URL and product name
-
                         url, product_name = line_str.split("name:", 1)
                         url = parse_uniqlo_url(url.strip())
                         product_name = product_name.strip()
@@ -450,11 +449,11 @@ def listen_to_ntfy(server, topic):
             logger.info("Retrying in 5 seconds")
             time.sleep(5)
             continue
-        # except Exception as e:
-        #     logger.error(f"General Error in listener: {e}")
-        #     logger.info("Retrying in 5 seconds")
-        #     time.sleep(5)
-        #     continue
+        except Exception as e:
+            logger.error(f"General Error in listener: {e}")
+            logger.info("Retrying in 5 seconds")
+            time.sleep(5)
+            continue
         break
 
 
