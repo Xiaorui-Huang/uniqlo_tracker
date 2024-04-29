@@ -20,7 +20,7 @@ def setup_logger():
 
     # Create a rotating file handler
     file_handler = RotatingFileHandler(
-        "uniqlo_monitor.log", maxBytes=1024 * 1024, backupCount=3
+        "uniqlo_monitor.log", maxBytes=1024 * 1024, backupCount=10
     )
     file_handler.setLevel(logging.INFO)
 
