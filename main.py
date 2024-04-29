@@ -365,6 +365,12 @@ def main():
                     else None
                 )
                 product_history[url] = new_info
+                
+                new_info["price_change"] = (
+                    f"{old_info['price']} -> {new_info['price']}"
+                    if old_info['price'] != new_info['price']
+                    else None
+                )
 
         
             product_data = [
@@ -372,7 +378,7 @@ def main():
                     info["nickname"],
                     info["name"],
                     (info["quantity"], info["quantity_change"]),
-                    info["price"],
+                    (info["price"], info["price_change"]),
                     info["color_name"],
                     info["size_name"],
                     info["url"],
@@ -381,8 +387,9 @@ def main():
             ]
         quantity_idx = 2
         product_data.sort(key=lambda x: x[quantity_idx][0])
-        for i, (_, _, (quantity, change), *_) in enumerate(product_data):
+        for i, (_, _, (quantity, change), (price, price_change), *_) in enumerate(product_data):
             product_data[i][quantity_idx] = change if change is not None else str(quantity)
+            product_data[i][quantity_idx + 1] = price_change if price_change is not None else str(price)
 
         logger.info(
             "\n"
