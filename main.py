@@ -151,6 +151,7 @@ def get_info_from_api(
                         ),
                         {"url": ""},
                     )["url"],
+                    "name": product_dict["name"],
                 },
                 color_code_prefix,
                 size_code_prefix,
@@ -158,13 +159,20 @@ def get_info_from_api(
     return None
 
 
-def get_info(url):
+def get_info(url, max_retries=5):
     api_url = get_api_url(url)
     color_display_code, size_display_code = parse_product_url(url)
 
-    info, color_code_prefix, size_code_prefix = get_info_from_api(
-        api_url, color_display_code, size_display_code
-    )
+    result = None
+    for _ in range(max_retries):
+        result = get_info_from_api(api_url, color_display_code, size_display_code)
+        if result is not None:
+            break
+
+    if result is None:  # if result is still None after max_retries
+        return None
+
+    info, color_code_prefix, size_code_prefix = result
 
     modified_url = url.split("?", 1)[0]
 
@@ -204,7 +212,7 @@ def send_ntfy_notification(
 
 
 def notify_product_added(product):
-    title = f"{product['product_name']} Added"
+    title = f"{product['nickname']} Added"
     priority = 3
     tags = None
     msg = f"Price: {product['price']}, Quantity: {product['quantity']}, {product['color_name']}, {product['size_name']}"
@@ -212,16 +220,16 @@ def notify_product_added(product):
         msg += " (on promo)"
 
     if product["statusCode"] == "LOW_STOCK":
-        title = f"{product['product_name']} is LOW on stock"
+        title = f"{product['nickname']} is LOW on stock"
         priority = 4
         tags = "warning"
         if product["quantity"] <= 3:
-            title = f"{product['product_name']} is ALMOST OUT of stock"
+            title = f"{product['nickname']} is ALMOST OUT of stock"
             priority = 5
             tags = "rotating_light"
 
     if product["statusCode"] == "STOCK_OUT":
-        title = f"{product['product_name']} is OUT OF STOCK"
+        title = f"{product['nickname']} is OUT OF STOCK"
         priority = 4
         tags = "skull"
 
@@ -237,17 +245,14 @@ def notify_product_added(product):
 
 
 def initialize_product_history():
-    for url, product_name in product_urls.items():
-        info, url = get_info(url)
-
-        if not info:
-            # try again once
-            info, url = get_info(url)
-            if not info:
-                logger.error(f"Unable to retrieve price for {url}")
+    for url, nickname in product_urls.items():
+        res = get_info(url)
+        if not res:
+            logger.error(f"Unable to retrieve price for {url}")
             continue
+        info, url = res
 
-        info["product_name"] = product_name
+        info["nickname"] = nickname
         info["url"] = url
 
         if info:
@@ -262,11 +267,11 @@ def initialize_product_history():
                 notify_product_added(product)
 
 
-def process_new_products(info, url, product_name):
+def process_new_products(info, url, nickname):
     # add in any new products to the product_history
     if not info:
         return
-    info["product_name"] = product_name
+    info["nickname"] = nickname
     info["url"] = url
     with product_history_lock:
         product_history[url] = info
@@ -281,28 +286,25 @@ def main():
         # check for updates
         with product_history_lock:
             for url, old_info in product_history.items():
-                new_info, url = get_info(url)
+                res = get_info(url)
+                if not res:
+                    logger.error(f"Unable to retrieve updated info for {url}")
+                    continue
+                new_info, url = res
 
-                if not new_info:
-                    # try again once
-                    new_info, url = get_info(url)
-                    if not new_info:
-                        logger.error(f"Unable to retrieve updated info for {url}")
-                        continue
-
-                new_info["product_name"] = old_info["product_name"]
+                new_info["nickname"] = old_info["nickname"]
                 new_info["url"] = url
 
                 # check price
                 if new_info["price"] != old_info["price"]:
                     price_diff = new_info["price"] - old_info["price"]
-                    msg = f"""The price for {new_info['product_name']} has changed
+                    msg = f"""The price for {new_info['nickname']} has changed
         Old price: {old_info['price']}
         New price: {new_info['price']}
         Price difference: {price_diff}"""
                     promo_str = " (ON PROMO)" if new_info["is_promo"] else ""
                     send_ntfy_notification(
-                        f"Price change for {new_info['product_name']}{promo_str}",
+                        f"Price change for {new_info['nickname']}{promo_str}",
                         msg,
                         topic,
                         new_info,
@@ -314,7 +316,7 @@ def main():
                 if new_info["statusCode"] != old_info["statusCode"]:
                     if new_info["statusCode"] == "LOW_STOCK":
                         send_ntfy_notification(
-                            f"{new_info['product_name']} is LOW on stock",
+                            f"{new_info['nickname']} is LOW on stock",
                             f"Price: {new_info['price']}, Quantity: {new_info['quantity']}, {new_info['color_name']}, {new_info['size_name']}",
                             topic,
                             new_info,
@@ -326,7 +328,7 @@ def main():
                         )
                     elif new_info["statusCode"] == "STOCK_OUT":
                         send_ntfy_notification(
-                            f"{new_info['product_name']} is OUT OF STOCK",
+                            f"{new_info['nickname']} is OUT OF STOCK",
                             " ",
                             topic,
                             new_info,
@@ -337,12 +339,12 @@ def main():
                 # check quantity if low stock
                 if new_info["statusCode"] == "LOW_STOCK":
                     if old_info["quantity"] > new_info["quantity"]:
-                        title = f"{new_info['product_name']} - Quantity change"
+                        title = f"{new_info['nickname']} - Quantity change"
                         msg = f"Qunaity is down from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}"
                         priority = 3
                         tags = "small_red_triangle_down	"
                         if new_info["quantity"] <= 3:
-                            title = f"{new_info['product_name']} - ALMOST OUT OF STOCK"
+                            title = f"{new_info['nickname']} - ALMOST OUT OF STOCK"
                             priority = 5
                             tags = "rotating_light"
                         send_ntfy_notification(
@@ -350,7 +352,7 @@ def main():
                         )
                     elif old_info["quantity"] < new_info["quantity"]:
                         send_ntfy_notification(
-                            f"{new_info['product_name']} - Quantity change",
+                            f"{new_info['nickname']} - Quantity change",
                             f"Qunaity is up from {old_info['quantity']} to {new_info['quantity']} at Price: {new_info['price']}",
                             topic,
                             new_info,
@@ -364,9 +366,11 @@ def main():
                 )
                 product_history[url] = new_info
 
+        
             product_data = [
                 [
-                    info["product_name"],
+                    info["nickname"],
+                    info["name"],
                     (info["quantity"], info["quantity_change"]),
                     info["price"],
                     info["color_name"],
@@ -375,15 +379,24 @@ def main():
                 ]
                 for info in product_history.values()
             ]
-        product_data.sort(key=lambda x: x[1][0])
-        for i, (_, (quantity, change), *_) in enumerate(product_data):
-            product_data[i][1] = change if change is not None else str(quantity)
+        quantity_idx = 2
+        product_data.sort(key=lambda x: x[quantity_idx][0])
+        for i, (_, _, (quantity, change), *_) in enumerate(product_data):
+            product_data[i][quantity_idx] = change if change is not None else str(quantity)
 
         logger.info(
             "\n"
             + tabulate(
                 product_data,
-                headers=["Product Name", "Quantity", "Price", "Color", "Size", "URL"],
+                headers=[
+                    "Nickname",
+                    "Product Name",
+                    "Quantity",
+                    "Price",
+                    "Color",
+                    "Size",
+                    "URL",
+                ],
                 tablefmt="outline",
             )
         )
@@ -406,7 +419,10 @@ def listen_to_ntfy(server, topic):
                         url = line_str.replace("remove:", "").strip()
                         url = parse_uniqlo_url(url)
 
-                        _, url = get_info(url)
+                        res = get_info(url)
+                        if res:
+                            _, url = res
+
                         with product_urls_lock:
                             if url in product_urls:
                                 del product_urls[url]
@@ -426,23 +442,30 @@ def listen_to_ntfy(server, topic):
                             else f"Product not found: {url}"
                         )
                     elif "name:" in line_str:
-                        url, product_name = line_str.split("name:", 1)
+                        url, nickname = line_str.split("name:", 1)
                         url = parse_uniqlo_url(url.strip())
-                        product_name = product_name.strip()
+                        nickname = nickname.strip()
 
-                        info, url = get_info(url)
+                        res = get_info(url)
+                        if not res:
+                            logger.error(
+                                f"Unable to retrieve product info for {url}. You can try again or there might be an issue with the product URL or Uniqlo API."
+                            )
+                            continue
+                        info, url = res
+
                         if url in product_urls or url in product_history:
                             logger.info(f"Product already exists: {url}")
                             continue
 
-                        process_new_products(info, url, product_name)
+                        process_new_products(info, url, nickname)
 
                         with product_urls_lock:
-                            product_urls[url] = product_name
+                            product_urls[url] = nickname
                             json.dump(
                                 product_urls, open("products.json", "w"), indent=4
                             )
-                        logger.info(f"Added product: {url} - {product_name}")
+                        logger.info(f"Added product: {url} - {nickname}")
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Server error: {e}")
