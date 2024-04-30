@@ -212,23 +212,24 @@ def send_ntfy_notification(
 
 
 def notify_product_added(product):
-    title = f"{product['nickname']} Added"
+    product_full_name = f"{product['name']} ({product['color_name']}) - {product['nickname']}" 
+    title = f"{product_full_name} Added"
     priority = 3
     tags = None
-    price_str = f"{product['price']}" + " (Sale)" if product["is_promo"] else ""
+    price_str = f"{product['price']}" + (" (Sale)" if product["is_promo"] else "")
     msg = f"Price: {price_str}, Quantity: {product['quantity']}, {product['color_name']}, {product['size_name']}"
 
     if product["statusCode"] == "LOW_STOCK":
-        title = f"{product['nickname']} is LOW on stock"
+        title = f"{product_full_name} is LOW on stock"
         priority = 4
         tags = "warning"
         if product["quantity"] <= 3:
-            title = f"{product['nickname']} is ALMOST OUT of stock"
+            title = f"{product_full_name} is ALMOST OUT of stock"
             priority = 5
             tags = "rotating_light"
 
     if product["statusCode"] == "STOCK_OUT":
-        title = f"{product['nickname']} is OUT OF STOCK"
+        title = f"{product_full_name} is OUT OF STOCK"
         priority = 4
         tags = "skull"
 
@@ -295,6 +296,7 @@ def main():
                 new_info["url"] = url
                 
                 price_str = f"{new_info['price']}" + " (Sale)" if new_info["is_promo"] else ""
+                product_full_name = f"{new_info['name']} ({new_info['color_name']}) - {new_info['nickname']}"
 
                 # check price
                 if new_info["price"] != old_info["price"]:
@@ -304,7 +306,7 @@ def main():
     New price: {new_info['price']}
     Price difference: {price_diff}"""
                     send_ntfy_notification(
-                        f"Price change for {new_info['nickname']}",
+                        f"Price change for {product_full_name}",
                         msg,
                         topic,
                         new_info,
@@ -316,7 +318,7 @@ def main():
                 if new_info["statusCode"] != old_info["statusCode"]:
                     if new_info["statusCode"] == "LOW_STOCK":
                         send_ntfy_notification(
-                            f"{new_info['nickname']} is LOW on stock",
+                            f"{product_full_name} is LOW on stock",
                             f"Price: {price_str}, Quantity: {new_info['quantity']}, {new_info['color_name']}, {new_info['size_name']}",
                             topic,
                             new_info,
@@ -328,7 +330,7 @@ def main():
                         )
                     elif new_info["statusCode"] == "STOCK_OUT":
                         send_ntfy_notification(
-                            f"{new_info['nickname']} is OUT OF STOCK",
+                            f"{product_full_name} is OUT OF STOCK",
                             " ",
                             topic,
                             new_info,
@@ -339,12 +341,12 @@ def main():
                 # check quantity if low stock
                 if new_info["statusCode"] == "LOW_STOCK":
                     if old_info["quantity"] > new_info["quantity"]:
-                        title = f"{new_info['nickname']} - Quantity change"
+                        title = f"{product_full_name} - Quantity change"
                         msg = f"Qunaity is down from {old_info['quantity']} to {new_info['quantity']} at Price: {price_str}"
                         priority = 3
                         tags = "small_red_triangle_down	"
                         if new_info["quantity"] <= 3:
-                            title = f"{new_info['nickname']} - ALMOST OUT OF STOCK"
+                            title = f"{product_full_name} - ALMOST OUT OF STOCK"
                             priority = 5
                             tags = "rotating_light"
                         send_ntfy_notification(
@@ -352,7 +354,7 @@ def main():
                         )
                     elif old_info["quantity"] < new_info["quantity"]:
                         send_ntfy_notification(
-                            f"{new_info['nickname']} - Quantity change",
+                            f"{product_full_name} - Quantity change",
                             f"Qunaity is up from {old_info['quantity']} to {new_info['quantity']} at Price: {price_str}",
                             topic,
                             new_info,
