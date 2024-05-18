@@ -77,6 +77,26 @@ def get_api_url(url):
     return api_url
 
 
+def get_response(api_url, max_retries=3, retry_delay=5):
+    retries = 0
+    while retries < max_retries:
+        try:
+            response = requests.get(
+                api_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10
+            )
+            response.raise_for_status()
+            return response
+        except requests.RequestException as e:
+            retries += 1
+            if retries == max_retries:
+                raise e
+            else:
+                time.sleep(retry_delay)
+                print(
+                    f"Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})"
+                )
+
+
 # https://www.uniqlo.com/ca/api/commerce/v3/en/products/E463985-000
 def get_info_from_api(
     api_url, color_display_code, size_display_code
@@ -91,11 +111,10 @@ def get_info_from_api(
         size_name: str
         image_url: str | None
     """
-    response = requests.get(api_url, headers={"User-Agent": "Mozilla/5.0"})
-    if response.status_code != 200:
-        logger.error(
-            f"Failed to get product data for {api_url} from API. Status code: {response.status_code}"
-        )
+    try:
+        response = get_response(api_url)
+    except requests.RequestException as e:
+        logger.error(f"Failed to get response from API: {e}")
         return None
 
     product_dict = response.json()["result"]["items"][0]
@@ -212,7 +231,9 @@ def send_ntfy_notification(
 
 
 def notify_product_added(product):
-    product_full_name = f"{product['name']} ({product['color_name']}) - {product['nickname']}" 
+    product_full_name = (
+        f"{product['name']} ({product['color_name']}) - {product['nickname']}"
+    )
     title = f"{product_full_name} Added"
     priority = 3
     tags = None
@@ -294,8 +315,10 @@ def main():
 
                 new_info["nickname"] = old_info["nickname"]
                 new_info["url"] = url
-                
-                price_str = f"{new_info['price']}" + " (Sale)" if new_info["is_promo"] else ""
+
+                price_str = (
+                    f"{new_info['price']}" + " (Sale)" if new_info["is_promo"] else ""
+                )
                 product_full_name = f"{new_info['name']} ({new_info['color_name']}) - {new_info['nickname']}"
 
                 # check price
@@ -367,20 +390,20 @@ def main():
                     else None
                 )
                 product_history[url] = new_info
-                
+
                 new_info["price_change"] = (
                     f"{old_info['price']} -> {new_info['price']}"
-                    if old_info['price'] != new_info['price']
+                    if old_info["price"] != new_info["price"]
                     else None
                 )
 
-        
             product_data = [
                 [
                     info["nickname"],
                     info["name"],
                     (info["quantity"], info["quantity_change"]),
                     (info["price"], info["price_change"]),
+                    "Yes" if info["is_promo"] else "",
                     info["color_name"],
                     info["size_name"],
                     info["url"],
@@ -389,9 +412,15 @@ def main():
             ]
         quantity_idx = 2
         product_data.sort(key=lambda x: x[quantity_idx][0])
-        for i, (_, _, (quantity, change), (price, price_change), *_) in enumerate(product_data):
-            product_data[i][quantity_idx] = change if change is not None else str(quantity)
-            product_data[i][quantity_idx + 1] = price_change if price_change is not None else str(price)
+        for i, (_, _, (quantity, change), (price, price_change), *_) in enumerate(
+            product_data
+        ):
+            product_data[i][quantity_idx] = (
+                change if change is not None else str(quantity)
+            )
+            product_data[i][quantity_idx + 1] = (
+                price_change if price_change is not None else str(price)
+            )
 
         logger.info(
             "\n"
@@ -399,9 +428,10 @@ def main():
                 product_data,
                 headers=[
                     "Nickname",
-                    "Product Name",
-                    "Quantity",
+                    "Name",
+                    "Stock",
                     "Price",
+                    "Sale",
                     "Color",
                     "Size",
                     "URL",
