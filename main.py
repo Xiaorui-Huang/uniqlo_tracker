@@ -2,6 +2,7 @@ import argparse
 import logging
 import json
 from logging.handlers import RotatingFileHandler
+import os
 import threading
 import requests
 import time
@@ -534,10 +535,24 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    with open("config.yml", "r") as f:
-        config = yaml.safe_load(f)
+    if os.path.exists("config.yml"):
+        with open("config.yml", "r") as f:
+            config = yaml.safe_load(f)
+    else:
+        config = {
+            "product_urls": [],
+            "refresh_time": 1200,
+            "ntfy_topic": "uniqlo_tracker",
+            "ntfy_listen_topic": "uniqlo_tracker_command"
+        }
+        json.dump(config, open("config.yml", "w"), indent=4)
+        
 
-    product_urls = json.load(open("products.json", "r"))
+    if os.path.exists("products.json"):
+        product_urls = json.load(open("products.json", "r"))
+    else:
+        product_urls = dict()
+
     refresh_time = config["refresh_time"]
     topic = config["ntfy_topic"]
     listen_topic = config["ntfy_listen_topic"]
@@ -549,7 +564,7 @@ if __name__ == "__main__":
     listen_thread = threading.Thread(
         target=listen_to_ntfy, args=(args.server, listen_topic)
     )
-    listen_thread.daemon = True
+    listen_thread.daemon = True # this makes the thread exit when the main thread exits
     listen_thread.start()
 
     main()
