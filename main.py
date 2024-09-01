@@ -540,7 +540,6 @@ if __name__ == "__main__":
             config = yaml.safe_load(f)
     else:
         config = {
-            "product_urls": [],
             "refresh_time": 1200,
             "ntfy_topic": "uniqlo_tracker",
             "ntfy_listen_topic": "uniqlo_tracker_command"
