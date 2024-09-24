@@ -100,12 +100,12 @@ def get_response(api_url, max_retries=3, retry_delay=5):
                     f"Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})"
                 )
        except Exception as e:
-           retries += 1
-           if retries == max_retries:
-               raise e
-           else:
-               time.sleep(retry_delay)
-               print(f"shit went down... {e}")
+            retries += 1
+            if retries == max_retries:
+                raise e
+            else:
+                time.sleep(retry_delay)
+                print(f"shit went down... {e}")
 
 
 # https://www.uniqlo.com/ca/api/commerce/v3/en/products/E463985-000
