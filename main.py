@@ -86,6 +86,9 @@ def get_response(api_url, max_retries=3, retry_delay=5):
                 api_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10
             )
             response.raise_for_status()
+            if "result" not in response.json():
+               raise Exception("corrupt json format")
+
             return response
         except requests.RequestException as e:
             retries += 1
@@ -96,6 +99,13 @@ def get_response(api_url, max_retries=3, retry_delay=5):
                 print(
                     f"Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})"
                 )
+       except Exception as e:
+           retries += 1
+           if retries == max_retries:
+               raise e
+           else:
+               time.sleep(retry_delay)
+               print(f"shit went down... {e}")
 
 
 # https://www.uniqlo.com/ca/api/commerce/v3/en/products/E463985-000
