@@ -99,7 +99,7 @@ def get_response(api_url, max_retries=3, retry_delay=5):
                 print(
                     f"Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})"
                 )
-       except Exception as e:
+        except Exception as e:
             retries += 1
             if retries == max_retries:
                 raise e
